@@ -1,5 +1,5 @@
 from django.http import JsonResponse
-from django.contrib.auth.models import User
+from django.contrib.auth import authenticate
 import json
 from oauth2_provider.decorators import protected_resource
 from django.views.decorators.csrf import csrf_exempt
@@ -16,10 +16,11 @@ def greetingendpoint(request):
     if request.method == 'POST':
         try:
             data = json.loads(request.body.decode('utf-8'))
-            greeting_text = data.get('greeting', '')
+            if not isinstance(data, dict) or not isinstance(data.get('greeting'), str) or not data['greeting'].strip():
+                return JsonResponse({'error': 'Provide a nonempty greeting string'}, status=400)
+            greeting_text = data['greeting']
 
-            greeting_instance = Greeting.objects.create(greeting=greeting_text)
-            greeting_instance.save()
+            Greeting.objects.create(greeting=greeting_text)
 
             if greeting_text.lower() == 'hello':
                 message = 'Goodbye!'
@@ -27,7 +28,7 @@ def greetingendpoint(request):
                 message = 'Greeting received!'
 
             return JsonResponse({'message': message}, status=200)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             return JsonResponse({'error': 'Invalid JSON data'}, status=400)
     else:
         return JsonResponse({'error': 'Only POST requests are allowed'}, status=405)
@@ -38,16 +39,16 @@ def signin(request):
     if request.method == 'POST':
         try:
             data = json.loads(request.body.decode('utf-8'))
-            username = data.get('username', '')
-            password = data.get('password', '')
-
-            user = User.objects.filter(username=username).first()
-            if user and user.password == password:
+            if not isinstance(data, dict) or not all(isinstance(data.get(key), str) and data[key].strip() for key in ['username', 'password']):
+                return JsonResponse({'error': 'Invalid JSON data'}, status=400)
+            username, password = data['username'], data['password']
+            user = authenticate(request, username=username, password=password)
+            if user is not None:
                 access_token = create_access_token(user)
                 return JsonResponse({'access_token': access_token.token}, status=200)
             else:
                 return JsonResponse({'error': 'User did not authenticate'}, status=400)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             return JsonResponse({'error': 'Invalid JSON data'}, status=400)
     else:
         return JsonResponse({'error': 'Only POST requests are allowed'}, status=405)
@@ -60,6 +61,7 @@ def create_access_token(user):
         user=user,
         application=app,
         expires=timezone.now() + relativedelta(hours=1),
-        token=tok
+        token=tok,
+        scope="read write"
     )
     return access_token
